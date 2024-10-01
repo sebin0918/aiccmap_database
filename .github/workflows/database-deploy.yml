@@ -23,7 +23,7 @@ jobs:
         docker stop db_container || true && \
         docker rm db_container || true && \
         docker build -t db_image . && \
-        docker run -d --name db_container -p 3306:3306 db_image && \
+        docker run -d --name aicc_db_map -p 3306:3306 db_image && \
         docker stop redis_container || true && \
         docker rm redis_container || true && \
         docker run -d --name redis_container -p 6379:6379 redis:latest
