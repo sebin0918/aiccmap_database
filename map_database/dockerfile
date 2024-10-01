@@ -25,4 +25,3 @@ COPY init.sql /docker-entrypoint-initdb.d/
 
 # 포트 설정
 EXPOSE 3306
-
