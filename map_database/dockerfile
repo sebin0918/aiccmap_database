@@ -2,10 +2,9 @@
 FROM mariadb:latest
 
 # 시스템 패키지 업데이트 및 Python 설치
-RUN apt-get update && apt-get install -y python3 python3-pip
+RUN apt-get update && apt-get install -y python3 python3-pip curl
 
 # 필요 패키지 설치 (가상환경 없이 시스템에 직접 설치)
-# RUN pip3 install --upgrade pip
 RUN pip3 install --break-system-packages beautifulsoup4 fredapi pykrx yfinance pymysql==1.1.1 faker
 
 # 데이터베이스 초기화 스크립트 및 관련 파일 복사
@@ -14,15 +13,11 @@ COPY DB_update.py /docker-entrypoint-initdb.d/
 COPY MAP_project_create_table.sql /docker-entrypoint-initdb.d/
 COPY README.txt /docker-entrypoint-initdb.d/
 
-# database_info 폴더 복사 (api_key.txt 및 database_id.txt 포함)
-COPY database_info/ /docker-entrypoint-initdb.d/database_info/
-
-# news_model 폴더 복사
-COPY news_model/ /docker-entrypoint-initdb.d/news_model/
+# 모델 파일 외부에서 다운로드
+RUN curl -o /docker-entrypoint-initdb.d/news_model/model.bin http://example.com/path/to/model.bin
 
 # init.sql 파일이 있다면 복사
 COPY init.sql /docker-entrypoint-initdb.d/
 
 # 포트 설정
 EXPOSE 3306
-
