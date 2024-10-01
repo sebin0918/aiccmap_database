@@ -1,0 +1,40 @@
+name: Deploy Database via Bastion and Server
+
+on:
+  push:
+    paths:
+      - 'map_database/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install sshpass
+      run: sudo apt-get install -y sshpass
+
+    - name: SSH into Client (Bastion), Server, and deploy to Database
+      run: |
+        echo "${{ secrets.AWS_EC2_KEY }}" > client_key.pem
+        echo "${{ secrets.EC2_SERVER_KEY }}" > server_key.pem
+        echo "${{ secrets.EC2_DB_KEY }}" > database_key.pem
+        chmod 400 client_key.pem server_key.pem database_key.pem
+
+        # 클라이언트 -> 서버 -> 데이터베이스 인스턴스 경유
+        ssh -o StrictHostKeyChecking=no -i ./client_key.pem -A -t ${{ secrets.AWS_EC2_USER }}@${{ secrets.CLIENT_EC2_HOST }} "\
+          ssh -o StrictHostKeyChecking=no -i ./server_key.pem -A -t ${{ secrets.AWS_EC2_USER }}@${{ secrets.SERVER_PRIVATE_IP }} \
+          'ssh -o StrictHostKeyChecking=no -i ./database_key.pem ${{ secrets.AWS_EC2_USER }}@${{ secrets.DATABASE_PRIVATE_IP }} \
+          cd ~/aicc_project/map_database && git pull && \
+          docker stop db_container || true && \
+          docker rm db_container || true && \
+          docker build -t db_image . && \
+          docker run -d --name db_container -p 3306:3306 db_image && \
+          docker stop redis_container || true && \
+          docker rm redis_container || true && \
+          docker run -d --name redis_container -p 6379:6379 redis:latest'"
