@@ -23,8 +23,18 @@ jobs:
         docker stop db_container || true && \
         docker rm db_container || true && \
         docker build -t db_image . && \
-        docker stop redis_container || true && \
-        docker rm redis_container || true && \
+        
+        # Start the MariaDB container
         docker run -d --name aicc_db_map -p 3306:3306 \
         -e MARIADB_ROOT_PASSWORD=root1234 db_image && \
+
+        # Wait for the database server to be ready before running the scripts
+        echo "Waiting for MariaDB to start..." && \
+        sleep 20 && \
+
+        # Execute the DB_setting.py script to initialize the database
+        docker exec -i aicc_db_map python3 /docker-entrypoint-initdb.d/DB_setting.py && \
+
+        docker stop redis_container || true && \
+        docker rm redis_container || true && \
         docker run -d --name redis_container -p 6379:6379 redis:latest
