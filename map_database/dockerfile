@@ -13,7 +13,8 @@ COPY DB_update.py /docker-entrypoint-initdb.d/
 COPY MAP_project_create_table.sql /docker-entrypoint-initdb.d/
 COPY README.txt /docker-entrypoint-initdb.d/
 
-# 모델 파일 외부에서 다운로드
+# news_model 폴더 생성 및 모델 파일 다운로드
+RUN mkdir -p /docker-entrypoint-initdb.d/news_model
 RUN curl -o /docker-entrypoint-initdb.d/news_model/model.bin http://example.com/path/to/model.bin
 
 # init.sql 파일이 있다면 복사

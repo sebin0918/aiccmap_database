@@ -44,7 +44,7 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 
 # 데이터베이스 연결 정보
-database_info = open('./database_info/database_id.txt', 'r').readlines()
+database_info = open('/docker-entrypoint-initdb.d/database_info/database_id.txt', 'r').readlines()
 
 sql_file_path = database_info[0].replace('\n', '')
 database_host_ip = database_info[1].replace('\n', '')
@@ -54,7 +54,7 @@ database_passwd = database_info[4].replace('\n', '')
 database_charset = database_info[5].replace('\n', '')
 
 # API KEY
-API_key = open('./database_info/api_key.txt', 'r').readlines()
+API_key = open('/docker-entrypoint-initdb.d/database_info/api_key.txt', 'r').readlines()
 
 ko_bank_key = API_key[0].replace('\n', '')
 fred_api_key = API_key[1].replace('\n', '')
