@@ -1,34 +1,55 @@
-# 표준 라이브러리
-from datetime import datetime, timedelta
-import urllib.request
-import urllib.parse
+# 데이터 처리 및 분석 관련 라이브러리
+import faiss
+import numpy as np
+import pandas as pd
+import networkx as nx
 import random
 import string
-import json
 
-# 외부 라이브러리
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, BertModel, BertTokenizer
-from bs4 import BeautifulSoup
-from fredapi import Fred
-from pykrx import stock as stk
-import yfinance as yf
-import torch.nn as nn
-import networkx as nx
-import pandas as pd
-import numpy as np
-import requests
-import pymysql
-import torch
+# 웹 관련 라이브러리
+import urllib.parse
+import urllib.request
+from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
 
-# NLTK 관련 다운로드
+# 자연어 처리 및 텍스트 분석 라이브러리
 import nltk
-nltk.download('punkt')
-nltk.download('stopwords')
-
-# NLTK 모듈
 from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.cluster.util import cosine_distance
 from nltk.corpus import stopwords
+from sentence_transformers import SentenceTransformer
+
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Transformer 기반 언어 모델 관련 라이브러리
+import torch
+from transformers import GPT2LMHeadModel, PreTrainedTokenizerFast, AutoModelForSequenceClassification, AutoTokenizer, BertModel, BertTokenizer
+
+# 시간 및 정규 표현식 관련 라이브러리
+from datetime import datetime, timedelta
+import re
+import time
+import json
+
+# 경고 및 로그 관리
+import warnings
+import logging
+from transformers import logging as hf_logging
+hf_logging.set_verbosity_error()
+logging.getLogger("faiss").setLevel(logging.ERROR)
+warnings.filterwarnings('ignore', category=FutureWarning)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+warnings.filterwarnings('ignore', category=MarkupResemblesLocatorWarning)
+
+# 외부 라이브러리
+from fredapi import Fred
+from pykrx import stock as stk
+import yfinance as yf
+import requests
+import pymysql
+import pickle
+import joblib
+import torch.nn as nn
 
 # 안전한 텐서 사용
 from safetensors.torch import safe_open
@@ -37,10 +58,9 @@ from safetensors.torch import safe_open
 import faker
 
 # 로깅 및 경고
-import warnings
-import logging
-warnings.simplefilter(action='ignore', category=FutureWarning)
-logging.getLogger("transformers").setLevel(logging.ERROR)
+import pytz
+
+kst = pytz.timezone('Asia/Seoul')
 
 # Faker 라이브러리 사용
 fake = faker.Faker('ko_KR')  # 한국어 로케일 설정
@@ -78,16 +98,20 @@ def generate_random_bank_number(length=12):
 def generate_phone_number():
     return '010' + ''.join(random.choices(string.digits, k=6))
 
+# 금액을 00 단위로 맞추는 함수
+def round_to_hundred(amount):
+    return (amount // 100) * 100
+
 # 데이터 생성 함수
-# 데이터 생성 함수
-def create_user_data(num_users=10):
-    # tb_user_key
+def create_user_data(num_users=10, income_range=(2000, 5000), fixed_income_range=(2500000, 4500000),
+                    expense_range=(5000, 20000), fixed_expense_range=(100000, 400000)):
+    # tb_user_key (사용자 정보)
     user_ids = list(range(1, num_users + 1))  # user_id를 숫자 형태로 생성
     emails = [fake.email() for _ in range(num_users)]
     passwords = [generate_random_password() for _ in range(num_users)]
     permissions = [1] * (num_users)
 
-    user_ids[0], emails[0], passwords[0], permissions[0] = 1, 'root@root.com', '1', 0
+    user_ids[0], emails[0], passwords[0], permissions[0] = 1, 'root@root.com', '1', 0 # 관리자 계정
     user_ids[1], emails[1], passwords[1], permissions[1] = 2, 'user@user.com', '1', 0
     user_ids[2], emails[2], passwords[2], permissions[2] = 3, 'test@test.com', '1', 1
 
@@ -98,10 +122,10 @@ def create_user_data(num_users=10):
         'uk_permission': permissions
     })
 
-    # tb_user_information
+    # tb_user_information (사용자 상세 정보)
     names = [fake.name() for _ in range(num_users)]
     birth_dates = [fake.date_of_birth(minimum_age=18, maximum_age=80) for _ in range(num_users)]
-    sexes = [0] + [1] * (num_users - 1)
+    sexes = [random.choice([0, 1]) for _ in range(num_users)]  # 성별을 랜덤으로 선택
     bank_nums = [generate_random_bank_number() for _ in range(num_users)]
     phone_numbers = [generate_phone_number() for _ in range(num_users)]
 
@@ -115,12 +139,12 @@ def create_user_data(num_users=10):
         'ui_phone_number': phone_numbers
     })
 
-    # tb_user_finance
-    capitals = np.random.randint(1000, 100000, size=num_users)
-    loans = np.random.randint(0, 50000, size=num_users)
-    installment_savings = np.random.randint(0, 20000, size=num_users)
-    deposits = np.random.randint(0, 100000, size=num_users)
-    target_budgets = np.random.randint(10000, 50000, size=num_users)
+    # tb_user_finance (사용자 재무 정보)
+    capitals = np.random.randint(5000000, 50000000, size=num_users)  # 자본금
+    loans = np.random.randint(0, 30000000, size=num_users)  # 대출
+    installment_savings = np.random.randint(0, 20000000, size=num_users)  # 적금
+    deposits = np.random.randint(0, 40000000, size=num_users)  # 예금
+    target_budgets = np.random.randint(2000000, 8000000, size=num_users)  # 목표 예산
 
     df_user_finance = pd.DataFrame({
         'user_id': user_ids,
@@ -133,64 +157,86 @@ def create_user_data(num_users=10):
 
     # tb_received_paid (입출금 내역)
     details = {
-        'income': ['월급', '선물', '이자', '임대', '보너스', '대출 상환', '기타'],
-        'expense': ['보험료', '마트', '편의점', '공과금', '교통', '식사', '예금', '정기 예금', '적금']
+        'income': ['선물', '임대', '보너스', '입금', '송금', '기타'],
+        'expense': ['마트', '편의점', '식사', '출금', '송금']
     }
-    fixed_incomes = ['월급', '대출 상환']
-    fixed_expenses = ['보험료', '공과금', '교통', '정기 예금', '적금']
+    fixed_incomes = ['월급', '이자', '배당금']
+    fixed_expenses = ['보험료', '대출 상환', '공과금', '교통', '정기 예금', '적금', '통신비']
 
-    date_a = '2014-01-01'
+    date_a = '2024-01-01'
     start_date = datetime(int(date_a[:4]), int(date_a[5:7]), int(date_a[8:]))
     end_date = datetime.today()
 
     records = []
-    for user_id in user_ids:
+    
+    # 각 사용자별 고정 수입 및 지출 값을 처음에 생성해 저장해둠
+    fixed_income_values = {user_id: {income: round_to_hundred(random.randint(*fixed_income_range)) for income in fixed_incomes} for user_id in user_ids}
+    fixed_expense_values = {user_id: {expense: round_to_hundred(random.randint(*fixed_expense_range)) for expense in fixed_expenses} for user_id in user_ids}
+
+    for user_id, loan in zip(user_ids, df_user_finance['uf_loan']):
         current_date = start_date
+        last_fixed_income_month = -1
+        last_fixed_expense_month = -1
+        loan_payment_done = False
         while current_date <= end_date:
-            # 수입 내역
+            if current_date.day in [15, 25]:
+                # 고정 수입 내역 (매달 같은 값)
+                for detail in fixed_incomes:
+                    if current_date.month != last_fixed_income_month:
+                        amount = fixed_income_values[user_id][detail]
+                        rp_hold = 0
+                        records.append([user_id, current_date, detail, amount, rp_hold, 0])
+                        last_fixed_income_month = current_date.month
+                        
+                # 고정 지출 내역 (매달 같은 값, 대출 상환은 한 달에 한 번만 기록)
+                if current_date.month != last_fixed_expense_month:
+                    for detail in fixed_expenses:
+                        if detail == '대출 상환' and loan > 0 and not loan_payment_done:
+                            amount = min(loan, fixed_expense_values[user_id][detail])
+                            loan -= amount
+                            rp_hold = 0
+                            records.append([user_id, current_date, detail, amount, rp_hold, 1])
+                            loan_payment_done = True
+                        elif detail != '대출 상환':
+                            amount = fixed_expense_values[user_id][detail]
+                            rp_hold = 0
+                            records.append([user_id, current_date, detail, amount, rp_hold, 1])
+                    last_fixed_expense_month = current_date.month
+                    loan_payment_done = False  # 다음 달에 다시 상환 가능
+
+            # 기타 수입 및 지출 내역 (랜덤하게 하루 최대 2개 생성)
             for detail in details['income']:
-                if detail in fixed_incomes:
-                    amount = random.randint(5000, 10000)
-                    rp_hold = 0  # 고정 수입은 rp_hold 0
-                else:
-                    amount = random.randint(1000, 5000)
-                    rp_hold = 1  # 그 외는 rp_hold 1
-                records.append([user_id, current_date, detail, amount, rp_hold, 0])  # rp_part 0: 수입
+                if random.random() < 0.2:
+                    amount = round_to_hundred(random.randint(*income_range))
+                    rp_hold = 1
+                    records.append([user_id, current_date, detail, amount, rp_hold, 0])
 
-            # 지출 내역
             for detail in details['expense']:
-                if detail in fixed_expenses:
-                    amount = random.randint(1000, 5000)
-                    rp_hold = 0  # 고정 지출은 rp_hold 0
-                else:
-                    amount = random.randint(500, 2000)
-                    rp_hold = 1  # 그 외는 rp_hold 1
-                records.append([user_id, current_date, detail, amount, rp_hold, 1])  # rp_part 1: 지출
+                if random.random() < 0.2 and detail != '대출 상환':
+                    amount = round_to_hundred(random.randint(*expense_range))
+                    rp_hold = 1
+                    records.append([user_id, current_date, detail, amount, rp_hold, 1])
 
-            # 매일 최대 5개의 거래를 생성
             current_date += timedelta(days=1)
 
     df_received_paid = pd.DataFrame(records, columns=['user_id', 'rp_date', 'rp_detail', 'rp_amount', 'rp_hold', 'rp_part'])
 
-    # tb_shares_held (주식 보유 내역)
+    # tb_shares_held (주식 거래 내역)
     shares_dates = pd.date_range(start=date_a, end=datetime.today(), freq='D').to_list()
 
     share_records = []
     for user_id in user_ids:
         for date in shares_dates:
-            # 주식 보유 개수를 -10에서 10까지 랜덤으로 설정
-            ss_count = np.random.randint(-10, 11)  # 삼성 주식 개수
-            ap_count = np.random.randint(-10, 11)  # 애플 주식 개수
-            bit_count = np.random.randint(-10, 11)  # 비트코인 개수
+            # 주식 매수/매도 내역을 -10에서 10까지 랜덤으로 설정
+            ss_count = np.random.randint(-10, 11)  # 삼성 주식 매수/매도
+            ap_count = np.random.randint(-10, 11)  # 애플 주식 매수/매도
+            bit_count = np.random.randint(-10, 11)  # 비트코인 매수/매도
 
             share_records.append([user_id, date, ss_count, ap_count, bit_count])
 
     df_shares_held = pd.DataFrame(share_records, columns=['user_id', 'sh_date', 'sh_ss_count', 'sh_ap_count', 'sh_bit_count'])
 
     return df_user_key, df_user_information, df_user_finance, df_received_paid, df_shares_held
-
-
-
 
 # per pbr 계산 함수
 def get_per_pbr_df(ticker_symbol, start_date, end_date):
@@ -559,6 +605,281 @@ def update_title_with_classification(row):
             return f"{row['title']}!eo$애플 악재입니다."
     return row['title']  # 호재/악재가 아니면 기존 제목 유지
 
+# ================================================================== stock market news ===================================================================
+def getRequestUrl(url):
+    req = urllib.request.Request(url)
+    req.add_header("X-Naver-Client-Id", client_id)
+    req.add_header("X-Naver-Client-Secret", client_secret)
+    try:
+        response = urllib.request.urlopen(req)
+        if response.getcode() == 200:
+            return response.read().decode('utf-8')
+        else:
+            print(f"HTTP Error {response.getcode()}: {response.reason}")
+            return None
+    except Exception as e:
+        print(e)
+        return None
+
+
+def sentence_similarity(sent1, sent2, stopwords=None):
+    # 불용어가 주어지지 않으면 빈 리스트로 초기화
+    if stopwords is None:
+        stopwords = []
+
+    # 문장을 모두 소문자로 변환
+    sent1 = [word.lower() for word in sent1 if word not in stopwords]
+    sent2 = [word.lower() for word in sent2 if word not in stopwords]
+
+    # 두 문장에서 모든 단어를 모두 중복을 제거한 집합 생성
+    all_words = list(set(sent1 + sent2))
+    
+    # 각 문장의 단어 등장 횟수를 기록할 벡터 초기화
+    vector1 = [0] * len(all_words)
+    vector2 = [0] * len(all_words)
+
+    # 첫 번째 문장의 단어 등장 횟수 기록
+    for word in sent1:
+        if word in stopwords:
+            continue # 불용어 무시
+        vector1[all_words.index(word)] += 1
+    
+    # 두 번째 문장의 단어 등장 횟수 기록
+    for word in sent2:
+        if word in stopwords:
+            continue
+        vector2[all_words.index(word)] += 1
+        
+        # 코사인 유사도 계산을 위해 벡터를 이용하여 측정
+        return 1 - cosine_distance(vector1, vector2)
+
+def build_similarity_matrix(sentences, stop_words):
+
+    # 문장 간 유사도 행렬 초기화
+    similarity_matrix = np.zeros((len(sentences), len(sentences)))
+
+    # 모든 문장 쌍에 대해 유사도 계산
+    for idx1 in range(len(sentences)):
+        for idx2 in range(len(sentences)):
+            # 같은 문장인 경우 계산하지 않음
+            if idx1 == idx2:
+                continue
+            
+            # 문장 간 유사도 게산하여 행렬에 할당
+            similarity_matrix[idx1][idx2] = sentence_similarity(sentences[idx1], sentences[idx2], stop_words)
+
+    return similarity_matrix
+
+
+def searchNaverNews_stock_market(query, display=10, start=1):
+    base_url = 'https://openapi.naver.com/v1/search/news.json'
+    query    = urllib.parse.quote(query)
+    url      = f"{base_url}?query={query}&display={display}&start={start}&sort=date"
+
+    response = getRequestUrl(url)
+    if response is None:
+        return None
+
+    return json.loads(response)
+
+
+def textrank_summary(text, num_sentences=3):
+    sentences = sent_tokenize(text)
+
+    stop_words = ['을', '를', '이', '가', '은', '는', '에', '의', '과', '와', '한', '들', '의']
+    sentences  = [word for word in sentences if word not in stop_words]
+
+    if len(sentences) < 2:
+        return ' '.join(sentences)
+
+    similarity_matrix = build_similarity_matrix(sentences, stop_words)
+    scores            = nx.pagerank(nx.from_numpy_array(similarity_matrix))
+    ranked_sentences  = sorted(((scores[i], s) for i, s in enumerate(sentences)), reverse=True)
+    summary           = ' '.join([sentence for score, sentence in ranked_sentences[:num_sentences]])
+
+    return summary
+
+def economic_news_search(num_days=30, display=100):
+    all_filtered_news = []
+    collected_data    = set()
+
+    # 확장된 증시 관련 키워드 목록
+    keywords = [
+        '증시', '코스피', '코스닥', '주식', '상장', '상장폐지', '배당', '배당금', '주가', '시가총액',
+        'PER', 'PBR', 'EPS', '매출', '순이익', '상승', '하락', '변동성', '투자', '매수', '매도', '공매도',
+        '기관투자자', '개인투자자', 'ETF', '선물', '옵션', '지수', '거래량', '상한가', '하한가', '상승장',
+        '하락장', '공시', '기업공개', 'IPO', '시장동향', '경제지표', '금리', '인플레이션', '디플레이션',
+        '유동성', '재무제표', '주주총회', '배당수익률', '채권', '펀드', '헤지펀드', '알고리즘', '기술적분석',
+        '기본적분석', '리스크', '포트폴리오', '다각화', '시장점유율', '신규상장', '기업실적', '경영전략',
+        '재무상태', '부채비율', '유보율', '자본금', '배당정책', '주식시장', '금융시장', '경제성장', '국제금융',
+        '환율', '원화', '달러', '유로', '엔화', '금', '은', '원자재', '에너지', '반도체', 'IT', '바이오',
+        '헬스케어', '제약', '자동차', '건설', '부동산', '소비재', '필수소비재', '이차전지', '전기차', '친환경',
+        '재생에너지', '스마트폰', '디지털', '블록체인', '암호화폐', '비트코인', '이더리움', '금융정책', '경제정책',
+        '금융위기', '코로나19', '백신', '금리인상', '금리인하', '채권시장', '부동산시장', '인플레이션율',
+        '디플레이션율', '경제성장률', 'GDP', '실업률', '소비자물가지수', '생산자물가지수', '수출', '수입',
+        '경상수지', '자본수지', '무역수지', '금융수지', '경기순환', '거시경제', '미시경제', '금융기관', '은행',
+        '증권사', '자산관리', '재테크', '부동산투자', '주식투자', '펀드투자', '채권투자', 'ETF투자', '리츠',
+        '벤처캐피탈', '스타트업', '핀테크', '모바일뱅킹', '온라인증권', '로보어드바이저', '디지털자산', '가상자산',
+        '스마트컨트랙트', '탈중앙화', '디파이', 'NFT', '메타버스', 'AI투자', '빅데이터', '클라우드컴퓨팅',
+        'IoT', '5G', '자율주행', '친환경차', '스마트시티', '헬스케어기술', '바이오테크', '제로에너지건축',
+        '그린에너지', '재생가능에너지', '탄소중립', 'ESG투자', '사회책임투자', '지속가능투자', '투자전략'
+    ]
+
+    exclude_keywords = ['기자', '?', "앵커", '투자', '운용사', '괜찮아요', 'http', '신진대사', '체질', '날씨', '기온']
+    today = datetime.today()
+    formatted_date = f"{today.month}월 {today.day}일"
+    # 쿼리 리스트 정의 (내부에서 고정된 쿼리 목록 사용, 증시 대표 키워드로 추가)
+    queries = [
+    '증시', '미국증시', '한국증시', '나스닥', '다우지수', 'S&P500', '니케이', '상해종합', 'FTSE100', 'DAX30', '항셍지수',
+    '유가', '천연가스', '미국채', '유럽경제', '기술주', '헬스케어', '핀테크', 'ESG', '인공지능', '비트코인',
+    '블록체인', '암호화폐', '달러', '원유', '금', '은', '구리', '철광석', '리튬', '배터리', '전기차', '테슬라',
+    '애플', '마이크로소프트', '아마존', '구글', '페이스북', '메타버스', '코로나19', '백신', '반도체', '5G',
+    'AI', '로봇공학', '양자 컴퓨팅', '사이버 보안', '자율주행', '클라우드컴퓨팅', '대선', '재생에너지',
+    '친환경차', '삼성전자', "HBM", "BDSPN", "파운드리"
+    ]
+    queries_with_date = [f"{formatted_date} {query}" for query in queries]
+
+    for query in queries_with_date:
+        filtered_news = searchNaverNews_stock_market(query, display=display)
+        if filtered_news and 'items' in filtered_news:
+            for item in filtered_news['items']:
+                title = BeautifulSoup(item['title'], 'html.parser').get_text()
+                description = BeautifulSoup(item['description'], 'html.parser').get_text()
+                content = description
+
+            # 제외할 키워드가 포함된 뉴스는 건너뛰기
+            if any(exclude in title for exclude in exclude_keywords) or any(exclude in content for exclude in exclude_keywords):
+                continue
+
+            # 제목, 설명, 본문 중 하나라도 중복된 경우 건너뛰기
+            if title in collected_data or description in collected_data or content in collected_data:
+                continue
+
+            if not '증시' in content:
+                continue
+
+            # 키워드와 겹치는 단어 수 계산
+            matched_keywords = [keyword for keyword in keywords if keyword in title or keyword in content]
+            if len(matched_keywords) < 3:  # 키워드가 N개 이상 겹치는 경우에만 가져옴
+                continue
+
+            link = item['link']
+            news_data = {
+                'title': title,
+                'description': description,
+                'link': link,
+                'Date': datetime.strptime(item['pubDate'], '%a, %d %b %Y %H:%M:%S +0900').strftime('%Y-%m-%d'),
+                'content': description,
+            }
+
+            news_data['summary'] = textrank_summary(news_data['description'])
+            all_filtered_news.append(news_data)
+            collected_data.update([title, description, content])
+
+    return None if not all_filtered_news else pd.DataFrame(all_filtered_news)
+
+def get_response(user_query_pre, top_k=3, max_new_tokens=150, try_count=False):
+    today = datetime.today()
+    formatted_date = f"{today.month}월 {today.day}일"
+
+    user_query =  formatted_date + user_query_pre
+
+    # 1. 뉴스 데이터 불러오기 및 전처리
+    df = economic_news_search()  # 뉴스 데이터를 가져오는 함수
+    df = df.dropna(subset=['summary'])  # 요약이 없는 데이터는 제거
+    texts = df['summary'].tolist()  # 요약 부분만 리스트로 변환
+    def remove_urls(text):
+        url_pattern = r'https?://\S+|www\.\S+'
+        return re.sub(url_pattern, '', text)
+
+    texts = [remove_urls(text) for text in texts]
+    # 2. 한국어 GPT 모델 설정
+    generator_model = GPT2LMHeadModel.from_pretrained('gpt2')
+    tokenizer = PreTrainedTokenizerFast.from_pretrained('gpt2')
+
+    # padding 토큰 설정 (GPT 모델에서는 eos_token을 padding으로 사용)
+    tokenizer.pad_token = tokenizer.eos_token
+    generator_model.config.pad_token_id = tokenizer.eos_token_id
+
+    # pad_token이 없는 경우, 새로운 pad_token 추가
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        generator_model.resize_token_embeddings(len(tokenizer))
+
+    # 3. SentenceTransformer 모델을 사용한 임베딩 모델 설정
+    embedding_model = SentenceTransformer('jhgan/ko-sroberta-multitask')
+
+    # 4. FAISS 인덱스 생성 및 추가
+    document_embeddings = embedding_model.encode(texts, convert_to_tensor=False, show_progress_bar=False)
+    document_embeddings = np.array(document_embeddings).astype('float32')
+    dimension = document_embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(document_embeddings)
+
+    # 5. 질의에 맞는 관련 뉴스를 검색하는 함수
+    def get_relevant_summaries(query, top_k=3):
+        query_embedding = embedding_model.encode([query], convert_to_tensor=False)
+        query_embedding = np.array(query_embedding).astype('float32')
+        distances, indices = index.search(query_embedding, top_k)
+        relevant_summaries = [texts[idx] for idx in indices[0]]
+        return relevant_summaries
+
+    # 6. 무조건 CPU 장치 설정
+    device = torch.device('cpu')
+    generator_model.to(device)
+
+    # 7. 답변 생성
+    relevant_summaries = get_relevant_summaries(user_query, top_k)
+    context = " ".join(relevant_summaries)
+    prompt = f"뉴스 요약: {context}\n질문: {user_query}\n답변: "
+
+    inputs = tokenizer(prompt, return_tensors='pt', padding=True).to(device)
+    attention_mask = inputs['attention_mask']
+    outputs = generator_model.generate(
+        inputs['input_ids'],
+        attention_mask=attention_mask,
+        max_new_tokens=max_new_tokens,
+        num_beams=5,
+        no_repeat_ngram_size=2,
+        early_stopping=True
+    )
+
+    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    answer = generated_text.split('답변:')[-1].strip()
+    def process_response(answer):
+        # "괜찮아요." 제거 및 세 번째 "다."에서 자르기
+        answer = answer.replace("괜찮아요.\n", "")
+        split_response = answer.split("다.")[:3]
+        final_response = "다.".join(split_response) + "다."
+
+        # 첫 번째 한글이 등장하는 위치를 찾고 그 이후의 텍스트 반환
+        korean_text_match = re.search(r'[가-힣]', final_response)
+        if korean_text_match:
+            korean_text_start = korean_text_match.start()
+            return final_response[korean_text_start:]  # 한글 이후 부분 반환
+        else:
+            return final_response  # 한글이 없으면 전체 텍스트 반환
+    final_response = process_response(answer)
+
+
+    print("상세 응답:", final_response)
+
+    # 반환값이 http로 시작하는 경우 다시 실행
+    if (final_response in ("", None) or user_query_pre not in final_response) and not try_count:
+        time.sleep(100)
+        return get_response(user_query, top_k, max_new_tokens, try_count=True)
+    if (final_response in ("", None) or user_query_pre not in final_response) and try_count:
+        return process_response(context)
+
+    return final_response
+
+user_query_pre = " 증시"
+response = get_response(user_query_pre)
+f_stock_market_text = open('./stock_market/stock_market.txt', 'w', encoding='utf-8')
+f_stock_market_news = f_stock_market_text.write(response)
+f_stock_market_text.close()
+
+
 # ================================================================== News data ==================================================================
 
 # 쿼리 리스트와 현재 날짜 설정
@@ -642,20 +963,22 @@ print('Start time : ', datetime.today())
 start_day = '2014-01-01'
 month_date = str(datetime.now().month)
 day_date = str(datetime.now().day)
-if len(month_date) == 1 :
+if len(month_date) == 1:
     month_date = f'0{month_date}'
-if len(day_date) == 1 :
+if len(day_date) == 1:
     day_date = f'0{day_date}'
-end_day = f'{datetime.now().year}-{month_date}-{day_date}' #'2024-08-28'
+end_day = f'{datetime.now().year}-{month_date}-{day_date}'  # '2024-08-28'
 
-start_date = datetime(int(start_day[:4]), int(start_day[5:7]), int(start_day[8:10]))
-end_date = datetime(int(end_day[:4]), int(end_day[5:7]), int(end_day[8:10]))
+start_date = datetime.strptime(start_day, '%Y-%m-%d')
+end_date = datetime.strptime(end_day, '%Y-%m-%d')
 
 date_df = pd.DataFrame(index=pd.date_range(start=start_date, end=end_date))
-df_len = [] # 데이터 길이를 조절하기 위한 리스트
 
+df_len = []  # 데이터 길이를 조절하기 위한 리스트
 
 # ************************************** tb_stock **************************************
+# 데이터를 가져오기 위한 날짜 범위 설정
+
 # Samsung(005930)
 ticker = '005930.KS'
 samsung = yf.Ticker(ticker)
@@ -677,6 +1000,7 @@ samsung_Market_Cap = pd.DataFrame({'sc_ss_mc': samsung_market})
 samsung_Market_Cap['sc_ss_mc'] = samsung_Market_Cap['sc_ss_mc'].map(lambda x : int(x))
 
 # Samsung PER, PBR, ROE
+samsung_PER_PBR_ROE = stk.get_market_fundamental(start_day, end_day, "005930")[['PER', 'PBR']] # 삼성전자
 samsung_PER_PBR_ROE = stk.get_market_fundamental(start_day, end_day, "005930")[['PER', 'PBR']] # 삼성전자
 samsung_PER_PBR_ROE.rename(columns={'PER' : 'sc_ss_per', 'PBR' : 'sc_ss_pbr'}, inplace=True)
 samsung_PER_PBR_ROE['sc_ss_roe'] = samsung_PER_PBR_ROE['sc_ss_pbr'] / samsung_PER_PBR_ROE['sc_ss_per']
@@ -741,24 +1065,103 @@ stock_df = stock_df.reset_index().rename(columns={'index' : 'fd_date'})
 stock_df.fillna(method='ffill', inplace=True)
 stock_df['fd_date'] = stock_df['fd_date'].astype(str).map(lambda x : x[:10])
 
+stock_df['fd_date'] = pd.to_datetime(stock_df['fd_date'])
+print(stock_df)
+
+# XGBoost 예측 함수
+def xgboost_predict(stock, df, model_filename):
+    stock_dataset = df[['fd_date', stock]].set_index('fd_date')
+    start_day = 300
+    forecast_days = 14 # 예측 날짜 변경
+
+    raw = [stock_dataset.shift(i) for i in range(start_day, 0, -1)]
+    sum_df = pd.concat(raw, axis=1).dropna()
+
+    train = sum_df.values
+    X = train[:, :-1]
+
+    model = joblib.load(model_filename)
+
+    data_in = stock_dataset[-start_day:].values.flatten().reshape(1, -1)
+
+    forecast_results = []
+    for _ in range(forecast_days):
+        prediction = model.predict(data_in)
+        forecast_results.append(prediction[0])
+        new_data = np.append(data_in[0][1:], prediction)
+        data_in = new_data.reshape(1, -1)
+
+    forecast_dates = pd.date_range(start=stock_dataset.index[-1] + pd.Timedelta(days=1), periods=forecast_days)
+    forecast_df = pd.DataFrame(forecast_results, index=forecast_dates, columns=['Forecast'])
+
+    return forecast_df
+
+# SARIMA 예측 함수
+def sarima_predict_up_to_date(stock, model_path, stock_df, lookback_days=60, steps_ahead=14): # steps_ahead 예측날짜 변경
+    latest_date = stock_df['fd_date'].max()
+    input_date = pd.to_datetime(latest_date)
+
+    df_filtered = stock_df[stock_df['fd_date'] <= latest_date].set_index('fd_date').asfreq('D').fillna(method='ffill')
+
+    with open(model_path, 'rb') as pkl_file:
+        loaded_model = pickle.load(pkl_file)
+
+    last_observed = df_filtered[stock].iloc[-lookback_days:]
+    future_pred_val = []
+
+    while len(future_pred_val) < steps_ahead:
+        pred = loaded_model.get_forecast(steps=steps_ahead)
+        pred_mean = pred.predicted_mean.cumsum() + last_observed.iloc[-1]
+        future_pred_val.extend(pred_mean)
+        last_observed = pd.concat([last_observed, pred_mean]).iloc[-lookback_days:]
+
+    future_pred_dates = pd.date_range(start=input_date + timedelta(days=1), periods=len(future_pred_val), freq='D')
+    forecast_df = pd.DataFrame(future_pred_val, index=future_pred_dates, columns=['Forecast'])
+    return forecast_df
+
+# 최종 데이터프레임 생성 함수
+def create_final_dataframe(xgb_df, sarima_ap_df, sarima_bit_df):
+    final_df = pd.DataFrame({
+        'sp_date': xgb_df.index,
+        'sp_ss_predict': xgb_df['Forecast'],
+        'sp_ap_predict': sarima_ap_df['Forecast'],
+        'sp_bit_predict': sarima_bit_df['Forecast']
+    })
+    return final_df
+
+# 예측 수행
+xgb_predict_df = xgboost_predict('sc_ss_stock', stock_df, './stock_model/regression_stock_samsung_XGBoost.pkl')
+sarima_ap_predict_df = sarima_predict_up_to_date('sc_ap_stock', './stock_model/regression_apple_sarima.pkl', stock_df)
+sarima_bit_predict_df = sarima_predict_up_to_date('sc_coin', './stock_model/regression_bitcoin_sarima.pkl', stock_df)
+
+# 최종 데이터프레임 생성
+df_stock_predict = create_final_dataframe(xgb_predict_df, sarima_ap_predict_df, sarima_bit_predict_df)
+print(df_stock_predict)
+
+
+
 
 # ************************************** tb_main_economic_index **************************************
 # NASDAQ
+nasdaq = yf.download('^IXIC', start='2014-01-01', end='2024-12-31')
 nasdaq = yf.download('^IXIC', start='2014-01-01', end='2024-12-31')
 nasdaq.rename(columns={'Close': 'mei_nasdaq'}, inplace=True)
 nasdaq = nasdaq['mei_nasdaq']
 
 # S&P 500
 snp500 = yf.download('^GSPC', start='2014-01-01', end='2024-12-31')
+snp500 = yf.download('^GSPC', start='2014-01-01', end='2024-12-31')
 snp500.rename(columns={'Close': 'mei_sp500'}, inplace=True)
 snp500 = snp500['mei_sp500']
 
 # Dow Jones Industrial Average (DJI)
 dow = yf.download('^DJI', start='2014-01-01', end='2024-12-31')
+dow = yf.download('^DJI', start='2014-01-01', end='2024-12-31')
 dow.rename(columns={'Close': 'mei_dow'}, inplace=True)
 dow = dow['mei_dow']
 
 # KOSPI
+kospi = yf.download('^KS11', start='2014-01-01', end='2024-12-31')
 kospi = yf.download('^KS11', start='2014-01-01', end='2024-12-31')
 kospi.rename(columns={'Close': 'mei_kospi'}, inplace=True)
 kospi = kospi['mei_kospi']
@@ -788,6 +1191,7 @@ oil_data['Date'] = pd.to_datetime(oil_data['Date'])
 oil_data.set_index(keys='Date', inplace=True)
 
 # Exchange Rate
+dollar_to_won = yf.download('KRW=X', '2014-01-01')
 dollar_to_won = yf.download('KRW=X', '2014-01-01')
 dollar_to_won.rename(columns={'Close' : 'mei_ex_rate'}, inplace=True)
 dollar_to_won = dollar_to_won['mei_ex_rate']
@@ -881,6 +1285,7 @@ korea_economic_indicator_df.fillna(method='ffill', inplace=True)
 korea_economic_indicator_df['fd_date'] = korea_economic_indicator_df['fd_date'].astype(str).map(lambda x : x[:10])
 
 
+df_user_key, df_user_information, df_user_finance, df_received_paid, df_shares_held = create_user_data()
 df_user_key, df_user_information, df_user_finance, df_received_paid, df_shares_held = create_user_data()
 
 # ************************************** tb_us_economic_indicator **************************************
@@ -983,6 +1388,7 @@ table_names = {
     8: 'tb_us_economic_indicator',
     9: 'tb_main_economic_index',
     10: 'tb_news',
+    11: 'tb_stock_predict',
 }
 
 columns_user_key = ['uk_email', 'uk_password', 'uk_permission']
@@ -1018,6 +1424,8 @@ values_main_economic_index = ['fd_date', 'mei_nasdaq', 'mei_sp500', 'mei_dow', '
 columns_news = ['news_title', 'news_simple_text', 'news_link', 'news_classification']
 values_news = ['news_title', 'news_simple_text', 'news_link', 'news_classification']
 
+columns_stock_predict = ['sp_date', 'sp_ss_predict', 'sp_ap_predict', 'sp_bit_predict']
+values_stock_predict = ['sp_date', 'sp_ss_predict', 'sp_ap_predict', 'sp_bit_predict']
 
 # 데이터 삽입
 insert_data(df_user_key, table_names[0], columns_user_key, values_user_key)
@@ -1031,6 +1439,7 @@ insert_data(df_korea_economic_indicator, table_names[7], columns_korea_economic_
 insert_data(df_us_economic_indicator, table_names[8], columns_us_economic_indicator, values_us_economic_indicator)
 insert_data(df_main_economic_index, table_names[9], columns_main_economic_index, values_main_economic_index)
 insert_data(df_news, table_names[10], columns_news, values_news)
+insert_data(df_stock_predict, table_names[11], columns_stock_predict, values_stock_predict)
 
 
 # 추가적인 테이블 삽입 예시 (나머지 테이블도 동일한 형식으로 추가)

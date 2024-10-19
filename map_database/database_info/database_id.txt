@@ -1,4 +1,4 @@
-/docker-entrypoint-initdb.d/MAP_project_create_table.sql
+/script/MAP_project_create_table.sql
 127.0.0.1
 AICC_DB_MAP
 root

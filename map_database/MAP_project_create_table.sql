@@ -151,7 +151,7 @@ CREATE TABLE tb_received_paid (
     user_id INT NOT NULL,
     rp_date DATE NOT NULL,
     rp_detail VARCHAR(100) NOT NULL,
-    rp_amount INT NOT NULL,
+    rp_amount DOUBLE NOT NULL,
     rp_hold BOOL NOT NULL,
     rp_part BOOL NOT NULL,
     PRIMARY KEY (rp_id),
@@ -198,7 +198,8 @@ ALTER TABLE tb_received_paid
 MODIFY rp_detail VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
 
 ALTER TABLE tb_chat_bot 
-MODIFY cb_text TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+MODIFY cb_text TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+MODIFY cb_query TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 ALTER TABLE tb_news  
 MODIFY news_title VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
